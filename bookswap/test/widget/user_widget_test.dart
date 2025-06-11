@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:bookswap/profile_page.dart';
 import 'package:bookswap/edit_profile_page.dart';
-import 'package:bookswap/change_password_page.dart';
+import 'package:bookswap/change_password _page.dart';
 
 void main() {
   group('User Management Widget Tests', () {
