@@ -94,7 +94,7 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
                           border: OutlineInputBorder(),
                         ),
                         validator: (value) {
-                          if (value == null  value.isEmpty) {
+                          if (value == null || value.isEmpty) {
                             return 'Please enter your old password';
                           }
                           return null;
@@ -109,12 +109,12 @@ class _ChangePasswordPageState extends ConsumerState<ChangePasswordPage> {
                           border: OutlineInputBorder(),
                         ),
                         validator: (value) {
-                          if (value == null  value.isEmpty) {
+                          if (value == null || value.isEmpty) {
                             return 'Please enter a new password';
                           }
                           if (value.length < 6) {
                             return 'Password must be at least 6 characters long';
-}
+                          }
                           return null;
                         },
                       ),

@@ -1,140 +1,30 @@
 import 'package:flutter/material.dart';
-import 'package:bookswap/home_page.dart';
-import 'package:bookswap/my_book_page.dart';
-import 'package:bookswap/profile_page.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io'; // Required for File
-import 'package:http/http.dart' as http; // Import http package
-import 'dart:convert'; // Import dart:convert for JSON encoding/decoding
-import 'package:shared_preferences/shared_preferences.dart'; // Import shared_preferences
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
+import 'package:bookswap/providers/books_provider.dart';
+import 'package:dio/dio.dart';
 
-class AddBookPage extends StatefulWidget {
+class AddBookPage extends ConsumerStatefulWidget {
   const AddBookPage({super.key});
 
   @override
-  _AddBookPageState createState() => _AddBookPageState();
+  ConsumerState<AddBookPage> createState() => _AddBookPageState();
 }
 
-class _AddBookPageState extends State<AddBookPage> {
+class _AddBookPageState extends ConsumerState<AddBookPage> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _authorController = TextEditingController();
   final TextEditingController _languageController = TextEditingController();
   final TextEditingController _editionController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
-  String? _selectedGenre; // For dropdown
-  File? _imageFile; // To store the selected image file
-  bool _isLoading = false; // For loading indicator
+  String? _selectedGenre;
+  File? _imageFile;
+  File? _pdfFile;
+  String? _pdfFileName;
 
   final ImagePicker _picker = ImagePicker();
-
-  Future<void> _pickImage() async {
-    final XFile? pickedFile = await _picker.pickImage(
-      source: ImageSource.gallery,
-    );
-
-    setState(() {
-      if (pickedFile != null) {
-        _imageFile = File(pickedFile.path);
-      } else {
-        print('No image selected.');
-      }
-    });
-  }
-
-  Future<void> _submitBook() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    final title = _titleController.text;
-    final author = _authorController.text;
-    final language = _languageController.text;
-    final edition = _editionController.text;
-    final description = _descriptionController.text;
-    final genre = _selectedGenre;
-
-    if (title.isEmpty ||
-        author.isEmpty ||
-        genre == null ||
-        _imageFile == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Please fill in all required fields and select an image.',
-          ),
-        ),
-      );
-      setState(() {
-        _isLoading = false;
-      });
-      return;
-    }
-
-    try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('auth_token');
-
-      if (token == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Authentication token not found. Please log in.'),
-          ),
-        );
-        Navigator.pushReplacementNamed(context, '/login');
-        return;
-      }
-
-      final bytes = await _imageFile!.readAsBytes();
-      final base64Image = base64Encode(bytes);
-
-      final response = await http.post(
-        Uri.parse('http://10.0.2.2:4000/api/books/book'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: json.encode({
-          'title': title,
-          'author': author,
-          'genre': genre,
-          'photo': base64Image,
-          'language': language,
-          'edition': edition,
-          'description': description,
-        }),
-      );
-
-      if (!mounted) return;
-
-      if (response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Book added successfully!')),
-        );
-        Navigator.pushReplacementNamed(
-          context,
-          '/home',
-        ); // Navigate to home page
-      } else {
-        final errorData = json.decode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to add book: ${errorData['message'] ?? response.statusCode}',
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('An error occurred: ${e.toString()}')),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
 
   @override
   void dispose() {
@@ -146,16 +36,127 @@ class _AddBookPageState extends State<AddBookPage> {
     super.dispose();
   }
 
+  Future<void> _pickImage() async {
+    final XFile? pickedFile = await _picker.pickImage(
+      source: ImageSource.gallery,
+    );
+
+    setState(() {
+      if (pickedFile != null) {
+        _imageFile = File(pickedFile.path);
+      }
+    });
+  }
+
+  Future<void> _pickPDF() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+
+    if (result != null) {
+      setState(() {
+        _pdfFile = File(result.files.single.path!);
+        _pdfFileName = result.files.single.name;
+      });
+    }
+  }
+
+  Future<void> _submitBook() async {
+    final title = _titleController.text;
+    final author = _authorController.text;
+    final language = _languageController.text;
+    final edition = _editionController.text;
+    final description = _descriptionController.text;
+    final genre = _selectedGenre;
+
+    if (title.isEmpty || author.isEmpty || genre == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please fill in all required fields.')),
+        );
+      }
+      return;
+    }
+
+    if (_imageFile == null && _pdfFile == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select either a cover photo or a PDF file.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final formData = FormData.fromMap({
+        'title': title,
+        'author': author,
+        'genre': genre,
+        'language': language,
+        'edition': edition,
+        'description': description,
+      });
+
+      if (_imageFile != null) {
+        formData.files.add(
+          MapEntry(
+            'photo',
+            await MultipartFile.fromFile(
+              _imageFile!.path,
+              filename: _imageFile!.path.split('/').last,
+            ),
+          ),
+        );
+      }
+
+      if (_pdfFile != null) {
+        formData.files.add(
+          MapEntry(
+            'pdf_file',
+            await MultipartFile.fromFile(
+              _pdfFile!.path,
+              filename: _pdfFile!.path.split('/').last,
+            ),
+          ),
+        );
+      }
+
+      await ref.read(booksProvider.notifier).addBook(formData);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Book added successfully!')),
+        );
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    } catch (e) {
+      if (mounted) {
+        String errorMessage = 'An error occurred: ${e.toString()}';
+        if (e is DioException) {
+          errorMessage = e.response?.data?['message'] ?? errorMessage;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(errorMessage)));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final booksState = ref.watch(booksProvider);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF3E5F5), // Light purple background
+      backgroundColor: const Color(0xFFF3E5F5),
       appBar: AppBar(
         backgroundColor: Colors.white,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () {
-            Navigator.pop(context);
+            Navigator.pushReplacementNamed(context, '/admin_dashboard');
           },
         ),
         title: const Text(
@@ -166,7 +167,7 @@ class _AddBookPageState extends State<AddBookPage> {
         elevation: 0,
       ),
       body:
-          _isLoading
+          booksState.isLoading
               ? const Center(child: CircularProgressIndicator())
               : SingleChildScrollView(
                 padding: const EdgeInsets.all(16.0),
@@ -194,26 +195,53 @@ class _AddBookPageState extends State<AddBookPage> {
                                     ),
                                     SizedBox(height: 8),
                                     Text(
-                                      'Tap to upload cover photo',
-                                      style: TextStyle(
-                                        color: Colors.grey,
-                                        fontSize: 16,
-                                      ),
+                                      'Upload Cover Photo',
+                                      style: TextStyle(color: Colors.grey),
                                     ),
                                   ],
                                 )
-                                : ClipRRect(
-                                  borderRadius: BorderRadius.circular(10.0),
-                                  child: Image.file(
-                                    _imageFile!,
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    height: double.infinity,
-                                  ),
-                                ),
+                                : Image.file(_imageFile!, fit: BoxFit.cover),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 15),
+
+                    // PDF Upload Area
+                    GestureDetector(
+                      onTap: _pickPDF,
+                      child: Container(
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10.0),
+                        ),
+                        child: Center(
+                          child:
+                              _pdfFile == null
+                                  ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: const [
+                                      Icon(
+                                        Icons.picture_as_pdf,
+                                        size: 24,
+                                        color: Colors.redAccent,
+                                      ),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Upload PDF File',
+                                        style: TextStyle(
+                                          color: Colors.redAccent,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                  : Text(
+                                    _pdfFileName!,
+                                    style: const TextStyle(color: Colors.black),
+                                  ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 15),
 
                     // Title Field
                     TextField(
@@ -349,11 +377,9 @@ class _AddBookPageState extends State<AddBookPage> {
 
                     // Submit Button
                     ElevatedButton(
-                      onPressed: _isLoading ? null : _submitBook,
+                      onPressed: booksState.isLoading ? null : _submitBook,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(
-                          0xFF673AB7,
-                        ), // Darker purple for button
+                        backgroundColor: const Color(0xFF673AB7),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16.0),
                         shape: RoundedRectangleBorder(
@@ -361,59 +387,44 @@ class _AddBookPageState extends State<AddBookPage> {
                         ),
                       ),
                       child:
-                          _isLoading
+                          booksState.isLoading
                               ? const CircularProgressIndicator(
-                                color: Colors.white,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
                               )
                               : const Text(
-                                'Submit',
+                                'Add Book',
                                 style: TextStyle(fontSize: 18),
                               ),
-                    ),
-                    const SizedBox(
-                      height: 20,
-                    ), // Added spacing for the error message
-                    // Placeholder for "Failed to load books: 404" (will be removed later if not needed)
-                    const Text(
-                      'Failed to load books: 404',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.red, fontSize: 16),
                     ),
                   ],
                 ),
               ),
       bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
+        currentIndex: 2, // 'Add Book' is at index 2
+        onTap: (index) {
+          if (index == 0) {
+            Navigator.pushReplacementNamed(context, '/home');
+          } else if (index == 1) {
+            Navigator.pushReplacementNamed(context, '/my_book');
+          } else if (index == 2) {
+            // Already on Add Book page, do nothing
+          } else if (index == 3) {
+            Navigator.pushReplacementNamed(context, '/profile');
+          }
+        },
+        backgroundColor: Colors.black,
+        selectedItemColor: Colors.white,
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
+        elevation: 0,
+        items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.book), label: 'My Book'),
+          BottomNavigationBarItem(icon: Icon(Icons.book), label: 'My Books'),
           BottomNavigationBarItem(icon: Icon(Icons.add), label: 'Add Book'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
         ],
-        currentIndex: 2, // 'Add Book' is the third item (index 2)
-        selectedItemColor: Colors.purple,
-        selectedLabelStyle: TextStyle(color: Colors.purple),
-        unselectedItemColor: Colors.grey,
-        unselectedLabelStyle: TextStyle(color: Colors.grey),
-        onTap: (index) {
-          setState(() {
-            // Navigator for bottom navigation bar
-            switch (index) {
-              case 0:
-                Navigator.pushReplacementNamed(context, '/home');
-                break;
-              case 1:
-                Navigator.pushReplacementNamed(context, '/my_book');
-                break;
-              case 2:
-                // Already on Add Book page
-                break;
-              case 3:
-                Navigator.pushReplacementNamed(context, '/profile');
-                break;
-            }
-          });
-        },
-        type: BottomNavigationBarType.fixed, // To show all labels
       ),
     );
   }
